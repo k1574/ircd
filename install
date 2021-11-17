@@ -1,0 +1,5 @@
+#!/bin/sh
+
+go build
+cp -f ircd $HOME/exe/
+
