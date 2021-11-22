@@ -8,6 +8,7 @@ import(
 	"io"
 	"errors"
 	"bufio"
+	"strings"
 )
 
 type User struct {
@@ -15,10 +16,14 @@ type User struct {
 }
 
 var(
+	AddrStr = "localhost:6667"
+	Prefix = ":"
+	LongArgSep = ":"
+	ArgSep = " "
 	MsgDelim = []byte("\r\n")
 	MaxMsgLen = 512
-	AddrStr = "localhost:6667"
 )
+
 
 /* Returns truncated bytes by size or delimiter. */
 func
@@ -59,13 +64,24 @@ ReadTrunc(rd *bufio.Reader, siz int, delim []byte) ([]byte, error) {
 }
 
 func
+SplitTilSep(s, sep, endsep string) ([]string, string) {
+	n := strings.LastIndex(s, endsep)
+	var arg, str string
+	if n != -1 {
+		arg = s[:n]
+		str = s[n:]
+	} else {
+		arg = s
+		str = ""
+	}
+
+	return strings.Split(arg, sep), str
+}
+
+func
 ReadRawMsg(conn net.Conn) []byte {
 	msg, _ := ReadTrunc(bufio.NewReader(conn), MaxMsgLen, MsgDelim)
 	return msg
-}
-
-ReadMsg(conn net.Conn) []string {
-	
 }
 
 func
@@ -74,6 +90,11 @@ HandleConn(conn net.Conn) {
 
 func
 main() {
+	rd := bufio.NewReader(os.Stdin)
+	val, _ := ReadTrunc(rd, 20, MsgDelim)
+	args, str := SplitTilSep(string(val), ArgSep, ArgSep + LongArgSep)
+	fmt.Printf("%v %d '%s'", args, len(args), str)
+	return
 	ln, err := net.Listen("tcp", AddrStr)
 	if err != nil {
 		log.Fatal(err)
