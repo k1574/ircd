@@ -64,10 +64,9 @@ ReadRawMsg(conn net.Conn) []byte {
 	return msg
 }
 
-/*func
 ReadMsg(conn net.Conn) []string {
 	
-}*/
+}
 
 func
 HandleConn(conn net.Conn) {
