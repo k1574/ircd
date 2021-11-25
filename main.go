@@ -18,8 +18,8 @@ type User struct {
 var(
 	AddrStr = "localhost:6667"
 	SrcPrefix = ":"
-	LongArgSep = ":"
 	ArgSep = " "
+	LongArgSep =  ArgSep+":"
 	MsgDelim = []byte("\r\n")
 	MaxMsgLen = 512
 )
@@ -78,7 +78,7 @@ SplitTilSep(s, sep, endsep string) ([]string, string) {
 	var arg, str string
 	if n != -1 {
 		arg = s[:n]
-		str = s[n:]
+		str = s[n+len(endsep):]
 	} else {
 		arg = s
 		str = ""
@@ -105,7 +105,7 @@ ReadMsg(conn net.Conn) (string, []string, string, error) {
 	src := ""
 	if strings.HasPrefix(s, SrcPrefix) {
 		s = s[len(SrcPrefix):]
-		strs := strings.SplitN(s, ArgSep, 1)
+		strs := strings.SplitN(s, ArgSep, 2)
 		src, s = strs[0], strs[1]
 	}
 
@@ -116,13 +116,11 @@ ReadMsg(conn net.Conn) (string, []string, string, error) {
 func
 HandleConn(conn net.Conn) {
 	for {
-		_, _, _, err := ReadMsg(conn)
+		pref, args, lngArgs, err := ReadMsg(conn)
 		if err != nil {
-			fmt.Println("left")
 			return;
-		} else {
-			fmt.Println("good")
 		}
+		fmt.Printf("'%s' %v '%s'\n", pref, args, lngArgs)
 	}
 }
 
