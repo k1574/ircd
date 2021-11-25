@@ -1,7 +1,7 @@
 package main
 
 import(
-	"os"
+	//"os"
 	"log"
 	"net"
 	"fmt"
@@ -17,7 +17,7 @@ type User struct {
 
 var(
 	AddrStr = "localhost:6667"
-	Prefix = ":"
+	SrcPrefix = ":"
 	LongArgSep = ":"
 	ArgSep = " "
 	MsgDelim = []byte("\r\n")
@@ -32,20 +32,29 @@ ReadTrunc(rd *bufio.Reader, siz int, delim []byte) ([]byte, error) {
 	if dlen <= 0 {
 		return nil, errors.New("delimiter length cannot be 0 or less")
 	}
-	var ret []byte
-	var peakLen = siz - dlen 
+	var(
+		ret []byte
+		peakLen = siz - dlen 
+		b byte
+		buf []byte
+	)
 
+	buf = make([]byte, 1)
+	
 	i := 0
 	j := 0
 	for ;  i < peakLen ; i++ {
-		b, err := rd.ReadByte()
+		n, err := rd.Read(buf)
 
-		if err == io.EOF {
-			break
+		if n == 0 {
+			return nil, errors.New("read 0 bytes, so leaving")
+		} else if err == io.EOF {
+			break;
 		} else if err != nil {
 			return nil, err
 		}
 
+		b = buf[0]
 		ret = append(ret, b)
 		if b == delim[j] {
 			if j == dlen - 1 { break }
@@ -79,22 +88,46 @@ SplitTilSep(s, sep, endsep string) ([]string, string) {
 }
 
 func
-ReadRawMsg(conn net.Conn) []byte {
-	msg, _ := ReadTrunc(bufio.NewReader(conn), MaxMsgLen, MsgDelim)
-	return msg
+ReadRawMsg(conn net.Conn) ([]byte, error) {
+	msg, err := ReadTrunc(bufio.NewReader(conn), MaxMsgLen, MsgDelim)
+	return msg, err
+}
+
+func
+ReadMsg(conn net.Conn) (string, []string, string, error) {
+	buf, err := ReadRawMsg(conn)
+	if err != nil {
+		return "", nil, "", err
+	}
+
+	s := string(buf)
+
+	src := ""
+	if strings.HasPrefix(s, SrcPrefix) {
+		s = s[len(SrcPrefix):]
+		strs := strings.SplitN(s, ArgSep, 1)
+		src, s = strs[0], strs[1]
+	}
+
+	args, lngarg := SplitTilSep(s, ArgSep, LongArgSep)
+	return src, args, lngarg, nil
 }
 
 func
 HandleConn(conn net.Conn) {
+	for {
+		_, _, _, err := ReadMsg(conn)
+		if err != nil {
+			fmt.Println("left")
+			return;
+		} else {
+			fmt.Println("good")
+		}
+	}
 }
 
 func
 main() {
-	rd := bufio.NewReader(os.Stdin)
-	val, _ := ReadTrunc(rd, 20, MsgDelim)
-	args, str := SplitTilSep(string(val), ArgSep, ArgSep + LongArgSep)
-	fmt.Printf("%v %d '%s'", args, len(args), str)
-	return
 	ln, err := net.Listen("tcp", AddrStr)
 	if err != nil {
 		log.Fatal(err)
