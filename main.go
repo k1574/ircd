@@ -11,6 +11,12 @@ import(
 	"strings"
 )
 
+type Message struct {
+	pref string
+	args []string
+	lngarg string
+}
+
 type User struct {
 	Login string
 }
@@ -94,10 +100,10 @@ ReadRawMsg(conn net.Conn) ([]byte, error) {
 }
 
 func
-ReadMsg(conn net.Conn) (string, []string, string, error) {
+ReadMsg(conn net.Conn) (Message, error) {
 	buf, err := ReadRawMsg(conn)
 	if err != nil {
-		return "", nil, "", err
+		return Message{"", nil, ""}, err
 	}
 
 	s := string(buf)
@@ -109,18 +115,19 @@ ReadMsg(conn net.Conn) (string, []string, string, error) {
 		src, s = strs[0], strs[1]
 	}
 
+	s = s[:len(s)-len(MsgDelim)]
 	args, lngarg := SplitTilSep(s, ArgSep, LongArgSep)
-	return src, args, lngarg, nil
+	return Message{src, args, lngarg}, nil
 }
 
 func
 HandleConn(conn net.Conn) {
 	for {
-		pref, args, lngArgs, err := ReadMsg(conn)
+		msg, err := ReadMsg(conn)
 		if err != nil {
 			return;
 		}
-		fmt.Printf("'%s' %v '%s'\n", pref, args, lngArgs)
+		fmt.Printf("'%s' %v '%s'\n", msg.pref, msg.args, msg.lngarg)
 	}
 }
 
