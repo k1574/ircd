@@ -13,24 +13,33 @@ import(
 
 /* General type for interaction between client and server. */
 type Message struct {
-	pref string
+	src string
 	args []string
 	lngarg string
 }
 
 /* Commands from client. */
-type Command struct {
-	name string
+type Commands map[string] struct {
 	nargs int
+	hndl func(arg HndlArg)
 }
 
+/* Argument for handlers. */
+type HndlArg struct {
+	usr *User
+	msg Message
+}
+
+/* Keep users and channels. */
 type Server struct {
-	users []User
-	chans []Channel
+	users map[string]*User
+	chans []*Channel
 }
 
+/* Stick connection and nick together. */
 type User struct {
-	login string
+	conn net.Conn
+	nick string
 }
 
 type Channel struct {
@@ -41,26 +50,27 @@ var(
 	srv Server
 	AddrStr = "localhost:6667"
 
-	MsgSrcPrefix = ":"
+	MsgSrcPref = ":"
 	MsgArgSep = " "
 	MsgLongArgSep = MsgArgSep+":"
 	MsgDelim = []byte("\r\n")
 	MsgEmptyArg = "*"
 
+	UserNameCantHave= []string{" "}
 	ChanNamePrefixes = []string{"#", "&"}
 	ChanNameCantHave = []string{" ", ",", string([]byte{7}) }
 
-	ClientCommands = []Command{
-		{"NICK", 1},
-		{"PASS", 0},
-		{"SQUIT", 0},
-		{"USER", 3},
+	ClientCommands = Commands{
+		"NICK":{ 1, HandleNick},
+		"PASS":{ 0, HandlePass},
+		"SQUIT":{ 0, HandleSquit},
+		"USER":{ 3, HandleUser},
 
-		{"JOIN", 1},
-		{"PART", 1},
-		{"PRIVMSG", 1},
-		{"OPER", 0},
-		{"MODE", 0},
+		"JOIN":{ 1, HandleJoin},
+		"PART":{ 1, HandlePart},
+		"PRIVMSG":{ 1, HandlePrivMsg},
+		"OPER":{ 0, HandleOper},
+		"MODE":{ 0, HandleMode},
 	}
 
 )
@@ -71,6 +81,7 @@ const(
 	RPL_CREATED = 3
 	RPL_MYINFO = 4
 	RPL_BOUNCE = 5
+	RPL_NONE = 300
 	RPL_AWAY = 301
 	RPL_USERHOST = 302
 	RPL_ISON = 303
@@ -118,6 +129,78 @@ const(
 	MaxClientNickLen = 9
 )
 
+func
+HandleNick(a HndlArg) {
+	newNick := a.msg.args[0]
+
+	_, ok := srv.users[newNick]
+	if ok {
+		return
+	}
+
+	// Delete old user.
+	if a.usr.nick != "" {
+		delete(srv.users, a.usr.nick)
+	}
+
+	//fmt.Println("it fucking worked")
+	a.usr.nick = newNick
+	srv.users[newNick] = a.usr
+}
+
+func
+(usr *User)SendMessage(msg Message) error {
+	n, err := fmt.Fprint(usr.conn, MessageToRaw(msg))
+
+	if err != nil {
+		return err
+	} else if n == 0 {
+		return errors.New("Connection is closed")
+	}
+
+	return nil
+}
+
+func
+MessageToRaw(msg Message) []byte {
+	str := MsgSrcPref + msg.src +
+		strings.Join(msg.args, MsgArgSep) +
+		MsgLongArgSep + msg.lngarg +
+		string(MsgDelim)
+	return []byte(str)
+}
+
+func
+HandlePass(arg HndlArg){
+}
+
+func
+HandleSquit(arg HndlArg){
+}
+
+func
+HandleUser(arg HndlArg){
+}
+
+func
+HandleJoin(arg HndlArg){
+}
+
+func
+HandlePart(arg HndlArg){
+}
+
+func
+HandlePrivMsg(arg HndlArg){
+}
+
+func
+HandleOper(arg HndlArg){
+}
+
+func
+HandleMode(arg HndlArg){
+}
 
 /* Returns truncated bytes by size or delimiter. */
 func
@@ -197,8 +280,8 @@ ReadMsg(conn net.Conn) (Message, error) {
 	s := string(buf)
 
 	src := ""
-	if strings.HasPrefix(s, MsgSrcPrefix) {
-		s = s[len(MsgSrcPrefix):]
+	if strings.HasPrefix(s, MsgSrcPref) {
+		s = s[len(MsgSrcPref):]
 		strs := strings.SplitN(s, MsgArgSep, 2)
 		src, s = strs[0], strs[1]
 	}
@@ -209,24 +292,36 @@ ReadMsg(conn net.Conn) (Message, error) {
 }
 
 func
-handleMessage(conn net.Conn, msg Message) {
+HandleMessage(usr *User, msg Message) error {
 	if(len(msg.args) < 1){
-		return
+		return nil
+	}
+	
+	cmd, ok := ClientCommands[msg.args[0]]
+	if !ok {
+		return errors.New("No such command")
 	}
 
-	switch(msg.args[0]){
+	if cmd.nargs != len(msg.args) - 1 {
+		//FMT.Println("fuck you")
+		return nil
 	}
+
+	cmd.hndl(HndlArg{usr, msg})
+
+	return nil
 }
 
 func
-handleConn(conn net.Conn) {
+HandleConn(conn net.Conn) {
+	usr := User{conn, ""}
 	for {
 		msg, err := ReadMsg(conn)
 		if err != nil {
 			return;
 		}
-		//fmt.Printf("'%s' %v '%s'\n", msg.pref, msg.args, msg.lngarg)
-		handleMessage(conn, msg)
+		//fmt.Printf("'%s' %v '%s'\n", msg.src, msg.args, msg.lngarg)
+		HandleMessage(&usr, msg)
 	}
 }
 
@@ -236,12 +331,13 @@ main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	srv.users = make(map[string]*User)
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
 			log.Println(err)
 		}
 		fmt.Println(conn.RemoteAddr())
-		go handleConn(conn);
+		go HandleConn(conn);
 	}
 }
