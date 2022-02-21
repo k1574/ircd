@@ -44,10 +44,11 @@ type Server struct {
 type User struct {
 	conn net.Conn
 	nick, user, host, info string
+	mode int
 }
 
 type Channel struct {
-	users []*User
+	users map[string]*User
 }
 
 var(
@@ -61,10 +62,9 @@ var(
 	MsgDelim = []byte("\r\n")
 	MsgEmptyArg = "*"
 
+	ChanNameDelim = ","
 	ChanNamePrefixes = []string{"#", "&"}
-	ChanNameCantHave = []string{",", string([]byte{7}) }
-
-	UserNameCantHave= append(ChanNamePrefixes, []string{}...)
+	ChanNameCantHave = []string{ChanNameDelim, string([]byte{7}) }
 
 	ClientCommands = Commands{
 		"NICK":{ 1, HandleNick},
@@ -131,6 +131,7 @@ const(
 	RPL_MOTD = 372
 	RPL_ENDOFINFO = 374
 	RPL_MOTDSTART = 375
+	ERR_NORECIPIENT = 411
 	ERR_NOADMININFO = 423
 	ERR_FILEERROR = 424
 	ERR_NO_NICKNAMEGIVEN = 431
@@ -153,10 +154,12 @@ func
 HandleNick(a HndlArg) error {
 	newNick := a.msg.args[1]
 
-	_, ok := srv.users[newNick]
-	if ok {
+	_, nickExists := srv.users[newNick]
+	if nickExists {
 		log.Printf("Nick '%s' is already taken\n", newNick)
-		return nil
+		return SendMessage(a.usr, Message{srv.host,
+			[]string{FmtRplNum(ERR_NICKNAMEINUSE)},
+			"Nickname is already in use."})
 	}
 
 	// Delete old user.
@@ -181,7 +184,7 @@ func
 }
 
 func
-SendMessageToUser(usr *User, msg Message) error {
+SendMessage(usr *User, msg Message) error {
 	n, err := fmt.Fprint(usr.conn, string(MessageToRaw(msg)))
 
 	if err != nil {
@@ -200,7 +203,10 @@ MessageToRaw(msg Message) []byte {
 		str += MsgSrcPref + msg.src
 	}
 
-	str += strings.Join(msg.args, MsgArgSep)
+	if len(msg.args) > 0 {
+		str += MsgArgSep
+		str += strings.Join(msg.args, MsgArgSep)
+	}
 
 	if msg.lngarg != "" {
 		str += MsgLongArgSep + msg.lngarg
@@ -222,12 +228,41 @@ HandleSquit(arg HndlArg) error {
 }
 
 func
-HandleUser(arg HndlArg) error {
+HandleUser(a HndlArg) error {
+	user, mode, _, info :=
+		a.msg.args[1], a.msg.args[2],
+		a.msg.args[3], a.msg.lngarg
+	
+	a.usr.user = user
+	if v, err := strconv.Atoi(mode) ; err != nil {
+		a.usr.mode = 0
+	} else {
+		a.usr.mode = v
+	}
+	a.usr.info = info
+	
 	return nil
 }
 
 func
-HandleJoin(arg HndlArg) error {
+HandleJoin(a HndlArg) error {
+	chanStr := a.msg.args[1]
+	chanNames := strings.Split(chanStr, ChanNameDelim)
+	for _, v := range chanNames {
+		// Skip channel names without prefixes.
+		if HasAnyOfPrefixes(v, ChanNamePrefixes) == "" {
+			continue	
+		}
+
+		ch, ok := srv.chans[v]
+		// Create new channel if does not exist.
+		if !ok {
+			srv.chans[v] = &Channel{ make(map[string]*User)}
+			ch = srv.chans[v]
+		}
+
+		ch.users[a.usr.nick] = a.usr
+	}
 	return nil
 }
 
@@ -248,28 +283,44 @@ HasAnyOfPrefixes(s string, prefs []string) string {
 
 func
 HandlePrivMsg(a HndlArg) error {
-	to := a.msg.args[1]
-	msgstr := a.msg.lngarg
 	var recvs []*User
+	alltos := a.msg.args[1]
+	msgstr := a.msg.lngarg
+	names := strings.Split(alltos, ",")
 
 	// Getting list of receivers.
-	pref := HasAnyOfPrefixes(to, ChanNamePrefixes)
-	if pref != "" { // For channels.
-		ch, ok := srv.chans[to]
-		if !ok {
-			return nil
+	for _, to := range names {
+		pref := HasAnyOfPrefixes(to, ChanNamePrefixes)
+		if pref != "" { // For channels.
+			ch, ok := srv.chans[to]
+			if ok {
+				for  _, v := range ch.users {
+					recvs = append(recvs, v)
+				}
+			}
+		} else { // For exact user.
+			usr, ok := srv.users[to]
+			if !ok {
+				continue
+			}
+			recvs = append(recvs, usr)
 		}
-		recvs = ch.users
-	} else { // For exact user.
-		recvs = []*User{srv.users[to]}
+	}
+	
+	if len(recvs) == 0 {
+		return SendMessage(a.usr,
+			Message{
+				a.msg.src,
+				[]string{ FmtRplNum(ERR_NORECIPIENT)},
+				fmt.Sprintf("No recipient given (%s)", a.msg.args[0])} )
 	}
 
 	// Sending to every of them.
 	for _, u := range recvs {
 		log.Printf("Sending private message to '%s'\n", a.usr.nick)
-		err := SendMessageToUser(
+		err := SendMessage(
 			u,
-			Message{"", []string{a.msg.args[0], a.usr.nick}, msgstr})
+			Message{u.FullSrc(), []string{a.msg.args[0], a.usr.nick}, msgstr})
 		if err == CIC {
 			CleanUpUser(u)
 		}
@@ -386,7 +437,7 @@ HandleMessage(usr *User, msg Message) error {
 		return errors.New("No such command")
 	}
 
-	if cmd.nargs != len(msg.args) - 1 {
+	if cmd.nargs >= len(msg.args) {
 		log.Printf("Not enough arguments for '%s'\n", msg.args[0])
 		return nil
 	}
@@ -414,7 +465,7 @@ CleanUpUser(usr *User){
 func
 HandleConn(conn net.Conn) {
 	/* New user. Not in server lists yet though. */
-	usr := User{conn, "", "", srv.host, "" }
+	usr := User{conn: conn}
 	for {
 		msg, err := ReadMsg(conn)
 		/* If connection was closed in other thread 
