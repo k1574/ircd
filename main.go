@@ -10,144 +10,30 @@ import(
 	"bufio"
 	"strings"
 	"strconv"
+	"ircd/m/user"
+	"ircd/m/message"
+	"ircd/m/server"
 )
 
-/* General type for interaction between client and server. */
-type Message struct {
-	src string
-	args []string
-	lngarg string
-}
 
-/* Commands from client. */
-type Commands map[string] struct {
-	nargs int
-	hndl func(arg HndlArg) error
-}
-
-/* Argument for handlers. */
-type HndlArg struct {
-	usr *User
-	msg Message
-}
-
-/* Keep users and channels. */
-type Server struct {
-	host string
-	port int
-	ln net.Listener
-	users map[string]*User
-	chans map[string]*Channel
-}
-
-/* Stick connection and nick together. */
-type User struct {
-	conn net.Conn
-	nick, user, host, info string
-	mode int
-}
-
-type Channel struct {
-	users map[string]*User
-}
 
 var(
-	srv Server
+	srv server.Server
 	// Conection is closed error
 	CIC = errors.New("connection is closed")
 
-	MsgSrcPref = ":"
-	MsgArgSep = " "
-	MsgLongArgSep = MsgArgSep+":"
-	MsgDelim = []byte("\r\n")
-	MsgEmptyArg = "*"
-
-	ChanNameDelim = ","
-	ChanNamePrefixes = []string{"#", "&"}
-	ChanNameCantHave = []string{ChanNameDelim, string([]byte{7}) }
-
-	ClientCommands = Commands{
+	srv.cmds = server.Commands {
 		"NICK":{ 1, HandleNick},
-		"PASS":{ 0, HandlePass},
-		"SQUIT":{ 0, HandleSquit},
+		"PASS":{ 1, HandlePass},
 		"USER":{ 3, HandleUser},
 
 		"JOIN":{ 1, HandleJoin},
 		"PART":{ 1, HandlePart},
-		"PRIVMSG":{ 1, HandlePrivMsg},
+		"PRIVMSG":{ 2, HandlePrivMsg},
 		"OPER":{ 0, HandleOper},
 		"MODE":{ 0, HandleMode},
 	}
 
-)
-
-const(
-	RPL_WELCOME = 1
-	RPL_YOURHOST = 2
-	RPL_CREATED = 3
-	RPL_MYINFO = 4
-	RPL_BOUNCE = 5
-	RPL_TRACELINK = 200
-	RPL_TRACECONNECTING = 201
-	RPL_TRACEHANDSHAKE = 202
-	RPL_TRACEUNKNOWN = 203
-	RPL_TRACEOPERATOR = 204
-	RPL_NONE = 300
-	RPL_AWAY = 301
-	RPL_USERHOST = 302
-	RPL_ISON = 303
-	RPL_UNAWAY = 305
-	RPL_NOAWAY = 306
-	RPL_WHOISUSER = 311
-	RPL_WHOISSERVER = 312
-	RPL_WHOISOPERATOR = 313
-	RPL_WHOWASUSER = 314
-	RPL_ENDOFWHO = 315
-	RPL_WHOISIDLE = 317
-	RPL_ENDOFWHOIS = 318
-	RPL_WHOISCHANNELS = 319
-	RPL_LIST = 322
-	RPL_LISTEND = 323
-	RPL_CHANNELMODEIS = 324
-	RPL_UNIQOPIS = 325
-	RPL_NOTOPIC = 331
-	RPL_TOPIC = 332
-	RPL_INVITING = 341
-	RPL_SUMMONING = 342
-	RPL_INVITELIST = 346
-	RPL_ENDOFINVITELIST = 347
-	RPL_EXCEPTLIST = 348
-	RPL_ENDOFEXCEPTLIST = 349
-	RPL_VERSION = 351
-	RPL_WHOREPLY = 352
-	RPL_NAMREPLY = 353
-	RPL_LINKS = 364
-	RPL_ENDOFLINKS = 365
-	RPL_ENDOF_NAMES = 366
-	RPL_BANLIST = 367
-	RPL_ENDOFBANLIST = 368
-	RPL_ENDOFWHOWAS = 369
-	RPL_INFO = 371
-	RPL_MOTD = 372
-	RPL_ENDOFINFO = 374
-	RPL_MOTDSTART = 375
-	ERR_NORECIPIENT = 411
-	ERR_NOADMININFO = 423
-	ERR_FILEERROR = 424
-	ERR_NO_NICKNAMEGIVEN = 431
-	ERR_ERRONEUSNICKNAME = 432
-	ERR_NICKNAMEINUSE = 433
-	ERR_NICKCOLLISION = 436
-	ERR_UNAVAILSOURCE = 437
-	ERR_USERNOTINCHANNEL = 441
-	ERR_NOTONCHANNEL = 442
-	ERR_USERONCHANNEL = 443
-)
-
-const(
-	MaxMsgLen = 512
-	MaxChanNameLen = 200
-	MaxClientNickLen = 9
 )
 
 func
@@ -157,9 +43,9 @@ HandleNick(a HndlArg) error {
 	_, nickExists := srv.users[newNick]
 	if nickExists {
 		log.Printf("Nick '%s' is already taken\n", newNick)
-		return SendMessage(a.usr, Message{srv.host,
-			[]string{FmtRplNum(ERR_NICKNAMEINUSE)},
-			"Nickname is already in use."})
+		return message.Send(a.usr, Message{srv.host,
+			[]string{FmtRplNum(ERR_NICKNAMEINUSE), "Nickname is already in use."},
+		})
 	}
 
 	// Delete old user.
@@ -171,50 +57,6 @@ HandleNick(a HndlArg) error {
 	a.usr.nick = newNick
 	srv.users[newNick] = a.usr
 	return nil
-}
-
-func
-FmtRplNum(num int) string {
-	return fmt.Sprintf("%03d", num)
-}
-
-func
-(u *User)FullSrc() string {
-	return u.nick+"!"+u.user+"@"+u.host
-}
-
-func
-SendMessage(usr *User, msg Message) error {
-	n, err := fmt.Fprint(usr.conn, string(MessageToRaw(msg)))
-
-	if err != nil {
-		return err
-	} else if n == 0 {
-		return CIC
-	}
-
-	return nil
-}
-
-func
-MessageToRaw(msg Message) []byte {
-	str := ""
-	if msg.src != "" {
-		str += MsgSrcPref + msg.src
-	}
-
-	if len(msg.args) > 0 {
-		str += MsgArgSep
-		str += strings.Join(msg.args, MsgArgSep)
-	}
-
-	if msg.lngarg != "" {
-		str += MsgLongArgSep + msg.lngarg
-	}
-
-	str += string(MsgDelim)
-
-	return []byte(str)
 }
 
 func
@@ -231,7 +73,7 @@ func
 HandleUser(a HndlArg) error {
 	user, mode, _, info :=
 		a.msg.args[1], a.msg.args[2],
-		a.msg.args[3], a.msg.lngarg
+		a.msg.args[3], a.msg.args[4]
 	
 	a.usr.user = user
 	if v, err := strconv.Atoi(mode) ; err != nil {
@@ -250,7 +92,7 @@ HandleJoin(a HndlArg) error {
 	chanNames := strings.Split(chanStr, ChanNameDelim)
 	for _, v := range chanNames {
 		// Skip channel names without prefixes.
-		if HasAnyOfPrefixes(v, ChanNamePrefixes) == "" {
+		if format.HasAnyOfPrefixes(v, ChanNamePrefixes) == "" {
 			continue	
 		}
 
@@ -272,25 +114,15 @@ HandlePart(arg HndlArg) error {
 }
 
 func
-HasAnyOfPrefixes(s string, prefs []string) string {
-	for _, v := range prefs {
-		if strings.HasPrefix(s, v) {
-			return v
-		}
-	}
-	return ""
-}
-
-func
 HandlePrivMsg(a HndlArg) error {
 	var recvs []*User
 	alltos := a.msg.args[1]
-	msgstr := a.msg.lngarg
+	msgstr := a.msg.args[2]
 	names := strings.Split(alltos, ",")
 
 	// Getting list of receivers.
 	for _, to := range names {
-		pref := HasAnyOfPrefixes(to, ChanNamePrefixes)
+		pref := format.HasAnyOfPrefixes(to, ChanNamePrefixes)
 		if pref != "" { // For channels.
 			ch, ok := srv.chans[to]
 			if ok {
@@ -311,8 +143,12 @@ HandlePrivMsg(a HndlArg) error {
 		return SendMessage(a.usr,
 			Message{
 				a.msg.src,
-				[]string{ FmtRplNum(ERR_NORECIPIENT)},
-				fmt.Sprintf("No recipient given (%s)", a.msg.args[0])} )
+				[]string{
+					FmtRplNum(ERR_NORECIPIENT),
+					fmt.Sprintf("No recipient given (%s)", a.msg.args[0]),
+				},
+			},
+		)
 	}
 
 	// Sending to every of them.
@@ -320,7 +156,7 @@ HandlePrivMsg(a HndlArg) error {
 		log.Printf("Sending private message to '%s'\n", a.usr.nick)
 		err := SendMessage(
 			u,
-			Message{u.FullSrc(), []string{a.msg.args[0], a.usr.nick}, msgstr})
+			Message{u.FullSrc(), []string{a.msg.args[0], a.usr.nick, msgstr}})
 		if err == CIC {
 			CleanUpUser(u)
 		}
@@ -337,107 +173,15 @@ HandleMode(arg HndlArg) error {
 	return nil
 }
 
-/* Returns truncated bytes by size or delimiter. */
-func
-ReadTrunc(rd *bufio.Reader, siz int, delim []byte) ([]byte, error) {
-	dlen := len(delim)	
-	if dlen <= 0 {
-		return nil, errors.New("delimiter length cannot be 0 or less")
-	}
-	var(
-		ret []byte
-		peakLen = siz - dlen 
-		b byte
-		buf []byte
-	)
-
-	buf = make([]byte, 1)
-	
-	i := 0
-	j := 0
-	for ;  i < peakLen ; i++ {
-		n, err := rd.Read(buf)
-
-		if n == 0 {
-			return nil, CIC
-		} else if err == io.EOF {
-			break;
-		} else if err != nil {
-			return nil, err
-		}
-
-		b = buf[0]
-		ret = append(ret, b)
-		if b == delim[j] {
-			if j == dlen - 1 { break }
-			j++
-		} else {
-			j = 0
-		}
-	}
-
-	if i == peakLen {
-		ret = append(ret, delim...)
-	}
-	
-	
-	return ret, nil
-}
-
-func
-SplitTilSep(s, sep, endsep string) ([]string, string) {
-	n := strings.LastIndex(s, endsep)
-	var arg, str string
-	if n != -1 {
-		arg = s[:n]
-		str = s[n+len(endsep):]
-	} else {
-		arg = s
-		str = ""
-	}
-
-	return strings.Split(arg, sep), str
-}
-
-func
-ReadRawMsg(conn net.Conn) ([]byte, error) {
-	msg, err := ReadTrunc(bufio.NewReader(conn), MaxMsgLen, MsgDelim)
-	return msg, err
-}
-
-func
-ReadMsg(conn net.Conn) (Message, error) {
-	buf, err := ReadRawMsg(conn)
-	if err != nil {
-		return Message{"", nil, ""}, err
-	}
-
-	s := string(buf)
-
-	src := ""
-	if strings.HasPrefix(s, MsgSrcPref) {
-		s = s[len(MsgSrcPref):]
-		strs := strings.SplitN(s, MsgArgSep, 2)
-		src, s = strs[0], strs[1]
-	}
-
-	s = s[:len(s)-len(MsgDelim)]
-	args, lngarg := SplitTilSep(s, MsgArgSep, MsgLongArgSep)
-	return Message{src, args, lngarg}, nil
-}
 
 func
 HandleMessage(usr *User, msg Message) error {
-	if(len(msg.args) < 1){
-		return nil
-	}
-	
 	cmd, ok := ClientCommands[msg.args[0]]
 	if !ok {
 		return errors.New("No such command")
 	}
 
-	if cmd.nargs >= len(msg.args) {
+	if cmd.nargs > len(msg.args) - 1 {
 		log.Printf("Not enough arguments for '%s'\n", msg.args[0])
 		return nil
 	}
@@ -474,7 +218,7 @@ HandleConn(conn net.Conn) {
 			CleanUpUser(&usr)
 			return;
 		}
-		//fmt.Printf("'%s' %v '%s'\n", msg.src, msg.args, msg.lngarg)
+		fmt.Printf("'%s' %v\n", msg.src, msg.args)
 
 		/* Handling includes writing replies,
 			so CIC is checked when writing. */
