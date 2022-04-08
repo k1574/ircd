@@ -5,133 +5,119 @@ import(
 	"log"
 	"net"
 	"fmt"
-	"io"
 	"errors"
-	"bufio"
 	"strings"
 	"strconv"
 	"ircd/m/user"
 	"ircd/m/message"
 	"ircd/m/server"
+	"ircd/m/reply"
+	"ircd/m/channel"
+	"ircd/m/format"
+	"ircd/m/input"
 )
-
-
 
 var(
 	srv server.Server
 	// Conection is closed error
-	CIC = errors.New("connection is closed")
-
-	srv.cmds = server.Commands {
-		"NICK":{ 1, HandleNick},
-		"PASS":{ 1, HandlePass},
-		"USER":{ 3, HandleUser},
-
-		"JOIN":{ 1, HandleJoin},
-		"PART":{ 1, HandlePart},
-		"PRIVMSG":{ 2, HandlePrivMsg},
-		"OPER":{ 0, HandleOper},
-		"MODE":{ 0, HandleMode},
-	}
-
 )
 
 func
-HandleNick(a HndlArg) error {
-	newNick := a.msg.args[1]
+HandleNick(a server.HndlArg) error {
+	newNick := a.Msg.Args[1]
 
-	_, nickExists := srv.users[newNick]
+	_, nickExists := srv.Users[newNick]
 	if nickExists {
 		log.Printf("Nick '%s' is already taken\n", newNick)
-		return message.Send(a.usr, Message{srv.host,
-			[]string{FmtRplNum(ERR_NICKNAMEINUSE), "Nickname is already in use."},
+		return message.Send(a.Usr, message.Message{srv.Host,
+			[]string{reply.FormatNum(reply.ERR_NICKNAMEINUSE), "Nickname is already in use."},
 		})
 	}
 
 	// Delete old user.
-	if a.usr.nick != "" {
-		delete(srv.users, a.usr.nick)
+	if a.Usr.Nick != "" {
+		delete(srv.Users, a.Usr.Nick)
 	}
 
-	log.Printf("Set nick of '%s' to '%s'\n", a.usr.nick, newNick)
-	a.usr.nick = newNick
-	srv.users[newNick] = a.usr
+	log.Printf("Set nick of '%s' to '%s'\n", a.Usr.Nick, newNick)
+	a.Usr.Nick = newNick
+	srv.Users[newNick] = a.Usr
 	return nil
 }
 
 func
-HandlePass(arg HndlArg) error {
+HandlePass(arg server.HndlArg) error {
 	return nil
 }
 
 func
-HandleSquit(arg HndlArg) error {
+HandleSquit(arg server.HndlArg) error {
 	return nil
 }
 
 func
-HandleUser(a HndlArg) error {
+HandleUser(a server.HndlArg) error {
 	user, mode, _, info :=
-		a.msg.args[1], a.msg.args[2],
-		a.msg.args[3], a.msg.args[4]
+		a.Msg.Args[1], a.Msg.Args[2],
+		a.Msg.Args[3], a.Msg.Args[4]
 	
-	a.usr.user = user
+	a.Usr.User = user
 	if v, err := strconv.Atoi(mode) ; err != nil {
-		a.usr.mode = 0
+		a.Usr.Mode = 0
 	} else {
-		a.usr.mode = v
+		a.Usr.Mode = v
 	}
-	a.usr.info = info
+	a.Usr.Info = info
 	
 	return nil
 }
 
 func
-HandleJoin(a HndlArg) error {
-	chanStr := a.msg.args[1]
-	chanNames := strings.Split(chanStr, ChanNameDelim)
+HandleJoin(a server.HndlArg) error {
+	chanStr := a.Msg.Args[1]
+	chanNames := strings.Split(chanStr, channel.NamDel)
 	for _, v := range chanNames {
 		// Skip channel names without prefixes.
-		if format.HasAnyOfPrefixes(v, ChanNamePrefixes) == "" {
+		if format.HasAnyOfPrefixes(v, channel.NamPre) == "" {
 			continue	
 		}
 
-		ch, ok := srv.chans[v]
+		ch, ok := srv.Chans[v]
 		// Create new channel if does not exist.
 		if !ok {
-			srv.chans[v] = &Channel{ make(map[string]*User)}
-			ch = srv.chans[v]
+			srv.Chans[v] = &channel.Channel{ make(map[string]*user.User)}
+			ch = srv.Chans[v]
 		}
 
-		ch.users[a.usr.nick] = a.usr
+		ch.Users[a.Usr.Nick] = a.Usr
 	}
 	return nil
 }
 
 func
-HandlePart(arg HndlArg) error {
+HandlePart(arg server.HndlArg) error {
 	return nil
 }
 
 func
-HandlePrivMsg(a HndlArg) error {
-	var recvs []*User
-	alltos := a.msg.args[1]
-	msgstr := a.msg.args[2]
+HandlePrivMsg(a server.HndlArg) error {
+	var recvs []*user.User
+	alltos := a.Msg.Args[1]
+	msgstr := a.Msg.Args[2]
 	names := strings.Split(alltos, ",")
 
 	// Getting list of receivers.
 	for _, to := range names {
-		pref := format.HasAnyOfPrefixes(to, ChanNamePrefixes)
+		pref := format.HasAnyOfPrefixes(to, channel.NamPre)
 		if pref != "" { // For channels.
-			ch, ok := srv.chans[to]
+			ch, ok := srv.Chans[to]
 			if ok {
-				for  _, v := range ch.users {
+				for  _, v := range ch.Users {
 					recvs = append(recvs, v)
 				}
 			}
 		} else { // For exact user.
-			usr, ok := srv.users[to]
+			usr, ok := srv.Users[to]
 			if !ok {
 				continue
 			}
@@ -140,12 +126,12 @@ HandlePrivMsg(a HndlArg) error {
 	}
 	
 	if len(recvs) == 0 {
-		return SendMessage(a.usr,
-			Message{
-				a.msg.src,
+		return message.Send(a.Usr,
+			message.Message{
+				a.Msg.Src,
 				[]string{
-					FmtRplNum(ERR_NORECIPIENT),
-					fmt.Sprintf("No recipient given (%s)", a.msg.args[0]),
+					reply.FormatNum(reply.ERR_NORECIPIENT),
+					fmt.Sprintf("No recipient given (%s)", a.Msg.Args[0]),
 				},
 			},
 		)
@@ -153,41 +139,41 @@ HandlePrivMsg(a HndlArg) error {
 
 	// Sending to every of them.
 	for _, u := range recvs {
-		log.Printf("Sending private message to '%s'\n", a.usr.nick)
-		err := SendMessage(
+		log.Printf("Sending private message to '%s'\n", a.Usr.Nick)
+		err := message.Send(
 			u,
-			Message{u.FullSrc(), []string{a.msg.args[0], a.usr.nick, msgstr}})
-		if err == CIC {
+			message.Message{u.FullSrc(), []string{a.Msg.Args[0], a.Usr.Nick, msgstr}})
+		if err == input.CIC {
 			CleanUpUser(u)
 		}
 	}
 	return nil
 }
 func
-HandleOper(arg HndlArg) error {
+HandleOper(arg server.HndlArg) error {
 	return nil
 }
 
 func
-HandleMode(arg HndlArg) error {
+HandleMode(arg server.HndlArg) error {
 	return nil
 }
 
 
 func
-HandleMessage(usr *User, msg Message) error {
-	cmd, ok := ClientCommands[msg.args[0]]
+HandleMessage(usr *user.User, msg message.Message) error {
+	cmd, ok := srv.Cmds[msg.Args[0]]
 	if !ok {
 		return errors.New("No such command")
 	}
 
-	if cmd.nargs > len(msg.args) - 1 {
-		log.Printf("Not enough arguments for '%s'\n", msg.args[0])
+	if cmd.Nargs > len(msg.Args) - 1 {
+		log.Printf("Not enough arguments for '%s'\n", msg.Args[0])
 		return nil
 	}
 
-	log.Printf("Handling '%s'", msg.args[0])
-	err := cmd.hndl(HndlArg{usr, msg})
+	log.Printf("Handling '%s'", msg.Args[0])
+	err := cmd.Hndl(server.HndlArg{usr, msg})
 	if err != nil {
 		return err
 	}
@@ -196,34 +182,34 @@ HandleMessage(usr *User, msg Message) error {
 }
 
 func
-CleanUpUser(usr *User){
+CleanUpUser(usr *user.User){
 	/* We do not care if it is closed already. */
-	usr.conn.Close()
+	usr.Conn.Close()
 
-	if usr.nick != "" {
-		delete(srv.users, usr.nick)
+	if usr.Nick != "" {
+		delete(srv.Users, usr.Nick)
 	}
-	log.Printf("Done cleaning '%s' user\n", usr.nick)
+	log.Printf("Done cleaning '%s' user\n", usr.Nick)
 }
 
 func
 HandleConn(conn net.Conn) {
 	/* New user. Not in server lists yet though. */
-	usr := User{conn: conn}
+	usr := user.User{Conn: conn}
 	for {
-		msg, err := ReadMsg(conn)
+		msg, err := message.Read(conn)
 		/* If connection was closed in other thread 
 			then also CIC will be returned*/
-		if err == CIC {
+		if err == input.CIC {
 			CleanUpUser(&usr)
 			return;
 		}
-		fmt.Printf("'%s' %v\n", msg.src, msg.args)
+		fmt.Printf("'%s' %v\n", msg.Src, msg.Args)
 
 		/* Handling includes writing replies,
 			so CIC is checked when writing. */
 		err = HandleMessage(&usr, msg)
-		if err == CIC {
+		if err == input.CIC {
 			CleanUpUser(&usr)
 			return
 		}
@@ -241,13 +227,25 @@ main() {
 		log.Fatal(err)
 	}
 
-	srv = Server{host: host, port: port,
-		ln: ln,
-		users: make(map[string]*User),
-		chans: make(map[string]*Channel), }
+	srv = server.Server{Host: host, Port: port,
+		Ln: ln,
+		Users: make(map[string]*user.User),
+		Chans: make(map[string]*channel.Channel),
+		Cmds: server.Commands {
+			"NICK":{ 1, HandleNick},
+			"PASS":{ 1, HandlePass},
+			"USER":{ 3, HandleUser},
+
+			"JOIN":{ 1, HandleJoin},
+			"PART":{ 1, HandlePart},
+			"PRIVMSG":{ 2, HandlePrivMsg},
+			"OPER":{ 0, HandleOper},
+			"MODE":{ 0, HandleMode},
+		},
+	}
 
 	for {
-		conn, err := srv.ln.Accept()
+		conn, err := srv.Ln.Accept()
 		if err != nil {
 			log.Println(err)
 		}

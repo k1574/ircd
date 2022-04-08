@@ -1,5 +1,9 @@
 package reply
 
+import(
+	"fmt"
+)
+
 const(
 	RPL_WELCOME = 1
 	RPL_YOURHOST = 2
@@ -67,8 +71,8 @@ const(
 
 var(
 	Replies = map[int]string{
-		ERR_NEEDMOREPARAMS = "Not enough parameters",
-		ERR_ALREADYREGISTERED = "You may not reregister",
+		ERR_NEEDMOREPARAMS: "Not enough parameters",
+		ERR_ALREADYREGISTERED: "You may not reregister",
 	}
 )
 

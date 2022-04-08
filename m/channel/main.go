@@ -3,10 +3,9 @@ package channel
 import(
 	"ircd/m/user"
 )
-package channel
 
 type Channel struct {
-	users map[string]*user.User
+	Users map[string]*user.User
 }
 
 

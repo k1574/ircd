@@ -6,9 +6,9 @@ import(
 
 /* Stick connection and nick together. */
 type User struct {
-	conn net.Conn
-	nick, user, host, info string
-	mode int
+	Conn net.Conn
+	Nick, User, Host, Info string
+	Mode int
 }
 
 var(
@@ -17,10 +17,10 @@ var(
 
 func
 (u *User)CleanUp(){
-	usr.conn.close()
+	u.Conn.Close()
 }
 
 func
 (u *User)FullSrc() string {
-	return u.nick+"!"+u.user+"@"+u.host
+	return u.Nick+"!"+u.User+"@"+u.Host
 }

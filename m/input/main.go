@@ -3,6 +3,11 @@ package input
 import(
 	"bufio"
 	"errors"
+	"io"
+)
+
+var(
+	CIC = errors.New("connection is closed")
 )
 
 /* Returns truncated bytes by size or delimiter. */

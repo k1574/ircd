@@ -2,6 +2,7 @@ package server
 
 import(
 	"net"
+	"ircd/m/message"
 	"ircd/m/user"
 	"ircd/m/channel"
 )
@@ -9,23 +10,23 @@ import(
 
 /* Arguments for handlers. */
 type HndlArg struct {
-	usr *user.User
-	msg message.Message
+	Usr *user.User
+	Msg message.Message
 }
 
 type Commands map[string]struct {
-	nargs int
-	hndl func(arg HndlArg)
+	Nargs int
+	Hndl func(arg HndlArg) error
 }
 
 /* The main struct for all the project. */
 type Server struct {
-	host string
-	port int
-	ln net.Listener
-	users map[string]*user.User
-	chans map[string]*channel.Channel
-	cmds Commands
+	Host string
+	Port int
+	Ln net.Listener
+	Users map[string]*user.User
+	Chans map[string]*channel.Channel
+	Cmds Commands
 }
 
 func
@@ -43,5 +44,4 @@ func
 
 func
 (srv *Server)RemoveChan(name string) {
-	srv
 }
